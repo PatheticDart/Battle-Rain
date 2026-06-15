@@ -8,30 +8,38 @@ using Unity.Services.Core;
 using Unity.Services.Relay;
 using Unity.Services.Relay.Models;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 public class GameUIManager : NetworkBehaviour
 {
-    [Header("UI Panels")]
+    [Header("Main/Lobby Panels")]
     [SerializeField] private GameObject mainPanel;
     [SerializeField] private GameObject hostPanel;
     [SerializeField] private GameObject clientPanel;
     [SerializeField] private GameObject ingamePanel;
 
-    [Header("Main Menu Inputs/Outputs")]
+    [Header("Main Menu Inputs")]
     [SerializeField] private TMP_InputField joinCodeInput;
     [SerializeField] private TMP_Text statusText;
-
-    [Header("Host Menu Display")]
     [SerializeField] private TMP_Text generatedCodeText;
 
-    [Header("In-Game HUD Displays")]
+    [Header("In-Game HUD")]
     [SerializeField] private TMP_Text waveNumberText;
     [SerializeField] private TMP_Text healthStatusText;
-
-    [Header("Player Scores")]
-    // Array to hold your 4 player score text objects
     [SerializeField] private TMP_Text[] playerScoreTexts = new TMP_Text[4];
+
+    [Header("Death & Spectator UI")]
+    [SerializeField] private GameObject deathPanel;
+    [SerializeField] private TMP_Text spectateTargetText;
+    [SerializeField] private GameObject spectateLeftBtn;
+    [SerializeField] private GameObject spectateRightBtn;
+
+    [Header("Game Over UI")]
+    [SerializeField] private GameObject gameOverPanel;
+    [SerializeField] private TMP_Text[] gameOverScoreTexts = new TMP_Text[4];
+    [SerializeField] private GameObject hostGameOverButtons;
+    [SerializeField] private GameObject clientGameOverButtons;
 
     [Header("Scoreboard Styling")]
     [SerializeField] private Color localPlayerColor = Color.yellow;
@@ -42,8 +50,20 @@ public class GameUIManager : NetworkBehaviour
     [Header("Relay Core Settings")]
     [SerializeField] private int maxConnections = 4;
     private const string WebGLConnectionType = "wss";
+    private string currentJoinCode = "";
 
-    // Singleton instance for easy access from other scripts
+    [Header("Upgrade UI")]
+    [SerializeField] private GameObject upgradePanel;
+    [SerializeField] private TMP_Text[] upgradeButtonTexts = new TMP_Text[3];
+    private UpgradeType[] currentUpgrades = new UpgradeType[3];
+
+    [HideInInspector] public Transform CurrentCameraTarget;
+    [HideInInspector] public bool IsGameOver = false;
+    [HideInInspector] public NetworkVariable<bool> matchStarted = new NetworkVariable<bool>(false);
+
+    private List<PlayerHealth> spectatablePlayers = new List<PlayerHealth>();
+    private int currentSpectateIndex = 0;
+
     public static GameUIManager Instance { get; private set; }
 
     private void Awake()
@@ -64,152 +84,264 @@ public class GameUIManager : NetworkBehaviour
         try
         {
             if (UnityServices.State == ServicesInitializationState.Uninitialized)
-            {
                 await UnityServices.InitializeAsync();
-            }
-
             if (!AuthenticationService.Instance.IsSignedIn)
-            {
                 await AuthenticationService.Instance.SignInAnonymouslyAsync();
-            }
-
             SetStatus("Unity Services ready.");
         }
-        catch (Exception exception)
-        {
-            SetStatus("Unity Services failed to initialize.");
-            Debug.LogError(exception);
-        }
+        catch (Exception e) { SetStatus("Services failed."); Debug.LogError(e); }
     }
 
+    #region Lobby & Connecting
     public async void StartHost()
     {
         try
         {
-            SetStatus("Creating Relay Allocation...");
+            SetStatus("Creating Relay...");
             Allocation allocation = await RelayService.Instance.CreateAllocationAsync(maxConnections);
-            string joinCode = await RelayService.Instance.GetJoinCodeAsync(allocation.AllocationId);
+            currentJoinCode = await RelayService.Instance.GetJoinCodeAsync(allocation.AllocationId);
 
-            if (generatedCodeText != null)
-            {
-                generatedCodeText.text = $"JOIN CODE: {joinCode}";
-            }
+            if (generatedCodeText != null) generatedCodeText.text = $"JOIN CODE: {currentJoinCode}";
 
-            UnityTransport transport = NetworkManager.Singleton.GetComponent<UnityTransport>();
+            var transport = NetworkManager.Singleton.GetComponent<UnityTransport>();
             transport.UseWebSockets = true;
             transport.SetRelayServerData(AllocationUtils.ToRelayServerData(allocation, WebGLConnectionType));
 
-            if (NetworkManager.Singleton.StartHost())
-            {
-                SetStatus("Host started successfully.");
-                ShowPanel(hostPanel);
-            }
-            else
-            {
-                SetStatus("Failed to start Host.");
-            }
+            if (NetworkManager.Singleton.StartHost()) ShowPanel(hostPanel);
         }
-        catch (Exception exception)
-        {
-            SetStatus("Failed to host match.");
-            Debug.LogError(exception);
-        }
+        catch (Exception e) { SetStatus("Failed to host."); Debug.LogError(e); }
     }
 
     public async void StartClient()
     {
         try
         {
-            string joinCode = joinCodeInput.text.Trim();
-            if (string.IsNullOrEmpty(joinCode))
-            {
-                SetStatus("Please enter a valid join code.");
-                return;
-            }
+            if (string.IsNullOrEmpty(joinCodeInput.text)) return;
+            SetStatus("Connecting...");
+            JoinAllocation joinAllocation = await RelayService.Instance.JoinAllocationAsync(joinCodeInput.text.Trim());
 
-            SetStatus("Connecting to Relay...");
-            JoinAllocation joinAllocation = await RelayService.Instance.JoinAllocationAsync(joinCode);
-
-            UnityTransport transport = NetworkManager.Singleton.GetComponent<UnityTransport>();
+            var transport = NetworkManager.Singleton.GetComponent<UnityTransport>();
             transport.UseWebSockets = true;
             transport.SetRelayServerData(AllocationUtils.ToRelayServerData(joinAllocation, WebGLConnectionType));
 
-            if (NetworkManager.Singleton.StartClient())
-            {
-                SetStatus("Client started.");
-                ShowPanel(ingamePanel);
-            }
-            else
-            {
-                SetStatus("Failed to start Client.");
-            }
+            if (NetworkManager.Singleton.StartClient()) ShowPanel(clientPanel);
         }
-        catch (Exception exception)
-        {
-            SetStatus("Client failed. Check join code and Console.");
-            Debug.LogError(exception);
-        }
+        catch (Exception e) { SetStatus("Client failed."); Debug.LogError(e); }
     }
 
-    /// <summary>
-    /// Assigned directly to the Host UI Button "START FIREFIGHT" via Inspector OnClick event.
-    /// </summary>
     public void ActionStartMatch()
     {
         if (!IsServer) return;
+
+        matchStarted.Value = true;
 
         NetworkEnemyWaveSpawner spawner = FindFirstObjectByType<NetworkEnemyWaveSpawner>();
         if (spawner != null)
         {
             spawner.StartSpawningWaves();
-            ShowPanel(ingamePanel); // Shift host UI from layout staging to gameplay layer
+            AlertClientsMatchStartedClientRpc();
+        }
+    }
+
+    [ClientRpc]
+    private void AlertClientsMatchStartedClientRpc()
+    {
+        ShowPanel(ingamePanel);
+    }
+    #endregion
+
+    #region Quitting & Utilities
+    public void QuitApplication()
+    {
+        Application.Quit();
+    }
+
+    public void CopyJoinCodeToClipboard()
+    {
+        TextEditor te = new TextEditor();
+        te.text = currentJoinCode;
+        te.SelectAll();
+        te.Copy();
+        Debug.Log("Copied to clipboard: " + currentJoinCode);
+    }
+
+    public void DisconnectAndReturnToMenu()
+    {
+        NetworkManager.Singleton.Shutdown();
+        Destroy(NetworkManager.Singleton.gameObject);
+        SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
+    }
+
+    public void RestartMatch()
+    {
+        if (!IsServer) return;
+
+        NetworkEnemyWaveSpawner spawner = FindFirstObjectByType<NetworkEnemyWaveSpawner>();
+        if (spawner != null) spawner.ResetSpawner();
+
+        ProjectileBehavior[] allProjectiles = FindObjectsByType<ProjectileBehavior>(FindObjectsSortMode.None);
+        foreach (var proj in allProjectiles)
+        {
+            if (proj.NetworkObject != null && proj.NetworkObject.IsSpawned)
+            {
+                proj.NetworkObject.Despawn(true);
+            }
+        }
+
+        PlayerHealth[] allPlayers = FindObjectsByType<PlayerHealth>(FindObjectsSortMode.None);
+        NetworkPlayerSpawner pSpawner = FindFirstObjectByType<NetworkPlayerSpawner>();
+        Transform[] spawns = pSpawner != null ? pSpawner.spawnPoints : new Transform[0];
+
+        for (int i = 0; i < allPlayers.Length; i++)
+        {
+            Vector3 spawnPos = (spawns.Length > 0) ? spawns[i % spawns.Length].position : Vector3.zero;
+
+            allPlayers[i].Revive(spawnPos);
+
+            if (allPlayers[i].TryGetComponent(out PlayerScore ps))
+            {
+                ps.ResetScore();
+            }
+
+            if (allPlayers[i].TryGetComponent(out PlayerUpgrades pu))
+            {
+                pu.ResetUpgrades();
+            }
+        }
+
+        RestartMatchClientRpc();
+    }
+
+    [ClientRpc]
+    private void RestartMatchClientRpc()
+    {
+        IsGameOver = false;
+        ShowPanel(ingamePanel);
+
+        if (deathPanel) deathPanel.SetActive(false);
+
+        PlayerHealth[] allPlayers = FindObjectsByType<PlayerHealth>(FindObjectsSortMode.None);
+        foreach (var p in allPlayers)
+        {
+            if (p.IsOwner) SetLocalPlayerTransform(p.transform);
+        }
+    }
+    #endregion
+
+    #region Spectator Mode
+    public void SetLocalPlayerTransform(Transform playerTransform)
+    {
+        CurrentCameraTarget = playerTransform;
+    }
+
+    public void ShowDeathPanelAndSpectate()
+    {
+        if (mainPanel != null) mainPanel.SetActive(false);
+        if (hostPanel != null) hostPanel.SetActive(false);
+        if (clientPanel != null) clientPanel.SetActive(false);
+
+        if (ingamePanel != null) ingamePanel.SetActive(false);
+
+        deathPanel.SetActive(true);
+        RefreshSpectatorList();
+    }
+
+    public void SpectateNext() => CycleSpectator(1);
+    public void SpectatePrevious() => CycleSpectator(-1);
+
+    private void CycleSpectator(int direction)
+    {
+        RefreshSpectatorList();
+        if (spectatablePlayers.Count == 0) return;
+
+        currentSpectateIndex = (currentSpectateIndex + direction + spectatablePlayers.Count) % spectatablePlayers.Count;
+        UpdateSpectatorFocus();
+    }
+
+    private void RefreshSpectatorList()
+    {
+        spectatablePlayers.Clear();
+        foreach (var p in FindObjectsByType<PlayerHealth>(FindObjectsSortMode.None))
+        {
+            if (!p.isDead.Value) spectatablePlayers.Add(p);
+        }
+
+        bool showArrows = spectatablePlayers.Count > 1;
+        if (spectateLeftBtn != null) spectateLeftBtn.SetActive(showArrows);
+        if (spectateRightBtn != null) spectateRightBtn.SetActive(showArrows);
+
+        if (spectatablePlayers.Count > 0)
+        {
+            currentSpectateIndex = Mathf.Clamp(currentSpectateIndex, 0, spectatablePlayers.Count - 1);
+            UpdateSpectatorFocus();
         }
         else
         {
-            Debug.LogError("NetworkEnemyWaveSpawner could not be found in this scene!");
+            spectateTargetText.text = "ALL PLAYERS DEAD";
         }
     }
 
-    public override void OnNetworkSpawn()
+    private void UpdateSpectatorFocus()
     {
-        if (IsServer)
-        {
-            NetworkManager.Singleton.OnClientConnectedCallback += HandleClientConnected;
-            NetworkManager.Singleton.OnClientDisconnectCallback += HandleClientDisconnected;
-        }
-    }
+        if (spectatablePlayers.Count == 0) return;
 
-    public override void OnNetworkDespawn()
+        PlayerHealth targetPlayer = spectatablePlayers[currentSpectateIndex];
+        CurrentCameraTarget = targetPlayer.transform;
+
+        var allPlayers = new List<PlayerHealth>(FindObjectsByType<PlayerHealth>(FindObjectsSortMode.None));
+        allPlayers.Sort((a, b) => a.OwnerClientId.CompareTo(b.OwnerClientId));
+        int pNum = allPlayers.IndexOf(targetPlayer) + 1;
+
+        spectateTargetText.text = $"SPECTATING: PLAYER {pNum}";
+    }
+    #endregion
+
+    #region Game Over UI
+    [ClientRpc]
+    public void TriggerGameOverClientRpc()
     {
-        if (NetworkManager.Singleton != null)
+        IsGameOver = true;
+        ShowPanel(gameOverPanel);
+        deathPanel.SetActive(false);
+
+        if (hostGameOverButtons) hostGameOverButtons.SetActive(IsServer);
+        if (clientGameOverButtons) clientGameOverButtons.SetActive(!IsServer);
+
+        List<ScoreboardEntry> finalScores = PlayerScore.GetGameOverScoreboard();
+        for (int i = 0; i < gameOverScoreTexts.Length; i++)
         {
-            NetworkManager.Singleton.OnClientConnectedCallback -= HandleClientConnected;
-            NetworkManager.Singleton.OnClientDisconnectCallback -= HandleClientDisconnected;
+            if (i < finalScores.Count)
+            {
+                gameOverScoreTexts[i].gameObject.SetActive(true);
+                gameOverScoreTexts[i].text = $"PLAYER {finalScores[i].PlayerNumber}: {finalScores[i].Score}";
+
+                if (finalScores[i].IsLocalPlayer)
+                {
+                    gameOverScoreTexts[i].color = localPlayerColor;
+                    gameOverScoreTexts[i].fontSize = localPlayerFontSize;
+                }
+                else
+                {
+                    gameOverScoreTexts[i].color = otherPlayerColor;
+                    gameOverScoreTexts[i].fontSize = otherPlayerFontSize;
+                }
+            }
+            else
+            {
+                gameOverScoreTexts[i].gameObject.SetActive(false);
+            }
         }
     }
+    #endregion
 
-    private void HandleClientConnected(ulong clientId)
-    {
-        if (IsServer)
-        {
-            PlayerScore.UpdateGlobalScoreboard();
-        }
-    }
-
-    private void HandleClientDisconnected(ulong clientId)
-    {
-        if (IsServer)
-        {
-            PlayerScore.UpdateGlobalScoreboard();
-        }
-    }
-
+    #region Core Displays
     private void ShowPanel(GameObject targetPanel)
     {
         mainPanel.SetActive(targetPanel == mainPanel);
         hostPanel.SetActive(targetPanel == hostPanel);
         clientPanel.SetActive(targetPanel == clientPanel);
         ingamePanel.SetActive(targetPanel == ingamePanel);
+        if (gameOverPanel) gameOverPanel.SetActive(targetPanel == gameOverPanel);
     }
 
     private void SetStatus(string message)
@@ -223,17 +355,13 @@ public class GameUIManager : NetworkBehaviour
 
     private void HideAllScoreTexts()
     {
-        foreach (var txt in playerScoreTexts)
-        {
-            if (txt != null) txt.gameObject.SetActive(false);
-        }
+        foreach (var txt in playerScoreTexts) if (txt != null) txt.gameObject.SetActive(false);
     }
 
-    /// <summary>
-    /// Now processes our structured list of entries to display the scoreboard
-    /// </summary>
     public void RefreshScoreboard(List<ScoreboardEntry> activePlayerScores)
     {
+        if (IsGameOver) return;
+
         for (int i = 0; i < playerScoreTexts.Length; i++)
         {
             if (playerScoreTexts[i] == null) continue;
@@ -241,13 +369,9 @@ public class GameUIManager : NetworkBehaviour
             if (i < activePlayerScores.Count)
             {
                 playerScoreTexts[i].gameObject.SetActive(true);
-
                 ScoreboardEntry entry = activePlayerScores[i];
-
-                // Set the text formatting using the player's actual designated number (e.g., PLAYER 2)
                 playerScoreTexts[i].text = $"PLAYER {entry.PlayerNumber}: {entry.Score}";
 
-                // Highlight the text ONLY if the data container flags this as the local machine's player
                 if (entry.IsLocalPlayer)
                 {
                     playerScoreTexts[i].color = localPlayerColor;
@@ -264,5 +388,133 @@ public class GameUIManager : NetworkBehaviour
                 playerScoreTexts[i].gameObject.SetActive(false);
             }
         }
+    }
+    #endregion
+
+    #region Upgrades
+    [ClientRpc]
+    public void TriggerUpgradePanelClientRpc()
+    {
+        if (IsGameOver) return;
+
+        PlayerHealth localHealth = null;
+        PlayerUpgrades localUpgrades = null;
+
+        foreach (var p in FindObjectsByType<PlayerHealth>(FindObjectsSortMode.None))
+        {
+            if (p.IsOwner)
+            {
+                localHealth = p;
+                localUpgrades = p.GetComponent<PlayerUpgrades>();
+                break;
+            }
+        }
+
+        if (localHealth != null && !localHealth.isDead.Value && localUpgrades != null)
+        {
+            GenerateAndShowUpgrades(localUpgrades);
+        }
+    }
+
+    private void GenerateAndShowUpgrades(PlayerUpgrades localUpgrades)
+    {
+        // 1. Create a base upgrade pool excluding the Revive option
+        List<UpgradeType> basePool = new List<UpgradeType> {
+            UpgradeType.Damage, UpgradeType.FireRate, UpgradeType.HealthMax, UpgradeType.HealthRepair
+        };
+
+        if (localUpgrades.weaponLevel.Value < 5) basePool.Add(UpgradeType.AdditionalWeapon);
+
+        // 2. Shuffle the base list thoroughly
+        for (int i = 0; i < basePool.Count; i++)
+        {
+            UpgradeType temp = basePool[i];
+            int randomIndex = UnityEngine.Random.Range(i, basePool.Count);
+            basePool[i] = basePool[randomIndex];
+            basePool[randomIndex] = temp;
+        }
+
+        // 3. Look for dead teammates
+        PlayerHealth[] allPlayers = FindObjectsByType<PlayerHealth>(FindObjectsSortMode.None);
+        bool hasDeadTeammates = false;
+        foreach (var p in allPlayers)
+        {
+            if (p.isDead.Value && p.OwnerClientId != localUpgrades.OwnerClientId)
+            {
+                hasDeadTeammates = true;
+                break;
+            }
+        }
+
+        List<UpgradeType> finalThree = new List<UpgradeType>();
+
+        // 4. Implement Guaranteed Selection
+        if (allPlayers.Length >= 2 && hasDeadTeammates)
+        {
+            // Pick 2 random items from standard options and manually insert the Revive card
+            finalThree.Add(basePool[0]);
+            finalThree.Add(basePool[1]);
+            finalThree.Add(UpgradeType.ReviveTeammate);
+        }
+        else
+        {
+            // No dead teammates: pick standard 3 entries
+            finalThree.Add(basePool[0]);
+            finalThree.Add(basePool[1]);
+            finalThree.Add(basePool[2]);
+        }
+
+        // 5. Shuffle the final three cards together so Revive isn't always sitting on the exact same button slot
+        for (int i = 0; i < finalThree.Count; i++)
+        {
+            UpgradeType temp = finalThree[i];
+            int randomIndex = UnityEngine.Random.Range(i, finalThree.Count);
+            finalThree[i] = finalThree[randomIndex];
+            finalThree[randomIndex] = temp;
+        }
+
+        // 6. Map options to button arrays
+        for (int i = 0; i < 3; i++)
+        {
+            currentUpgrades[i] = finalThree[i];
+            upgradeButtonTexts[i].text = GetUpgradeName(finalThree[i]);
+        }
+
+        upgradePanel.SetActive(true);
+    }
+
+    private string GetUpgradeName(UpgradeType type)
+    {
+        switch (type)
+        {
+            case UpgradeType.AdditionalWeapon: return "ADDITIONAL WEAPONS (+1 BARREL)";
+            case UpgradeType.Damage: return "DAMAGE UP (x1.2)";
+            case UpgradeType.FireRate: return "FIRE RATE UP (x1.02)";
+            case UpgradeType.HealthMax: return "MAX HEALTH UP (x1.1)";
+            case UpgradeType.HealthRepair: return "REPAIR (HEAL 25%)";
+            case UpgradeType.ReviveTeammate: return "REVIVE A TEAMMATE";
+            default: return "UNKNOWN UPGRADE";
+        }
+    }
+
+    public void SelectUpgradeButton(int buttonIndex)
+    {
+        upgradePanel.SetActive(false);
+
+        foreach (var upgrades in FindObjectsByType<PlayerUpgrades>(FindObjectsSortMode.None))
+        {
+            if (upgrades.IsOwner)
+            {
+                upgrades.ApplyUpgradeServerRpc(currentUpgrades[buttonIndex], NetworkManager.Singleton.LocalClientId);
+                break;
+            }
+        }
+    }
+    #endregion
+
+    public void ResumeFromSpectate()
+    {
+        ShowPanel(ingamePanel);
+        if (deathPanel != null) deathPanel.SetActive(false);
     }
 }

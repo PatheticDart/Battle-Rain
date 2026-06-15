@@ -114,6 +114,12 @@ public class NetworkEnemyWaveSpawner : NetworkBehaviour
 
         RewardAllActivePlayers(1000);
 
+        // 👈 NEW: Trigger the upgrade UI for all players!
+        if (GameUIManager.Instance != null)
+        {
+            GameUIManager.Instance.TriggerUpgradePanelClientRpc();
+        }
+
         yield return new WaitForSeconds(delayBetweenWaves);
 
         isIntermissionActive = false;
@@ -134,5 +140,33 @@ public class NetworkEnemyWaveSpawner : NetworkBehaviour
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// Wipes all existing enemies and restarts the Spawner back to Wave 1.
+    /// </summary>
+    public void ResetSpawner()
+    {
+        if (!IsServer) return;
+
+        // Wipe out any lingering enemies
+        foreach (var enemy in activeEnemiesList)
+        {
+            if (enemy != null && enemy.GetComponent<NetworkObject>().IsSpawned)
+            {
+                enemy.GetComponent<NetworkObject>().Despawn(true);
+            }
+        }
+        activeEnemiesList.Clear();
+
+        // Reset wave variables
+        StopAllCoroutines();
+        currentWave = 0;
+        enemiesSpawnedSoFarThisWave = 0;
+        isIntermissionActive = false;
+        hasSpawningStarted = true;
+
+        // Launch a fresh Wave 1
+        StartNextWave();
     }
 }

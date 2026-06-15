@@ -31,6 +31,12 @@ public class EnemyHealth : NetworkBehaviour
     {
         if (IsServer)
         {
+            // 👈 NEW: Trigger the explosion effect and sound to all clients!
+            if (NetworkEffectManager.Instance != null)
+            {
+                NetworkEffectManager.Instance.PlayExplosionClientRpc(transform.position);
+            }
+
             // Look up the specific Player network asset using the client identity payload
             if (NetworkManager.Singleton.ConnectedClients.TryGetValue(shooterClientId, out var networkClient))
             {

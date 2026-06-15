@@ -7,67 +7,89 @@ public class ProjectileBehavior : NetworkBehaviour
     [HideInInspector] public float speed = 12f;
     [HideInInspector] public int damage = 10;
 
-    private void Update()
+    // 👈 FIXED: Server-authoritative raycasting shifted to FixedUpdate to stay perfectly in line with physics frames
+    private void FixedUpdate()
     {
-        // Calculate how far the bullet will move this exact frame
-        float stepDistance = speed * Time.deltaTime;
+        if (!IsServer) return;
 
-        // CRUCIAL: Only the server handles hit detection to prevent network desync
-        if (IsServer)
+        float stepDistance = speed * Time.fixedDeltaTime;
+
+        // Force Unity to map any recent network transform translations directly onto collider structures
+        Physics2D.SyncTransforms();
+
+        RaycastHit2D hit = Physics2D.Raycast(transform.position, transform.up, stepDistance);
+
+        if (hit.collider != null)
         {
-            // Shoot an invisible ray forward to see if we will hit anything this frame
-            RaycastHit2D hit = Physics2D.Raycast(transform.position, transform.up, stepDistance);
+            bool isEnemyBullet = (gameObject.CompareTag("EnemyBullet") || ownerClientId == 999999);
 
-            if (hit.collider != null)
+            // Hit checks
+            bool hitAnEnemy = hit.collider.CompareTag("Enemy") || (hit.collider.transform.parent != null && hit.collider.transform.parent.CompareTag("Enemy"));
+            bool hitAPlayer = hit.collider.CompareTag("Player") || hit.collider.gameObject.layer == LayerMask.NameToLayer("Player") ||
+                              (hit.collider.transform.parent != null && (hit.collider.transform.parent.CompareTag("Player") || hit.collider.transform.parent.gameObject.layer == LayerMask.NameToLayer("Player")));
+
+            // Hit an Enemy
+            if (hitAnEnemy)
             {
-                // Identify if this bullet belongs to an enemy or a player
-                // (Enemy bullets use our placeholder ID 999999 assigned in NetworkEnemyShooter)
-                bool isEnemyBullet = (gameObject.CompareTag("EnemyBullet") || ownerClientId == 999999);
+                if (!isEnemyBullet)
+                {
+                    EnemyHealth enemyHealth = hit.collider.GetComponentInParent<EnemyHealth>();
+                    if (enemyHealth != null) enemyHealth.TakeDamage(damage, ownerClientId);
 
-                // Hit an Enemy
-                if (hit.collider.CompareTag("Enemy"))
-                {
-                    if (isEnemyBullet)
-                    {
-                        // Friendly Fire Protection: Let the enemy bullet pass through other enemies
-                    }
-                    else
-                    {
-                        EnemyHealth enemyHealth = hit.collider.GetComponent<EnemyHealth>();
-                        if (enemyHealth != null)
-                        {
-                            // Pass the damage and the owner's ClientId to the enemy for tracking points
-                            enemyHealth.TakeDamage(damage, ownerClientId);
-                        }
-                        Destroy(gameObject);
-                        return;
-                    }
+                    TriggerSparkAndDestroy(hit.point);
+                    return;
                 }
-                // Hit a Player
-                else if (hit.collider.CompareTag("Player"))
+            }
+            // Hit a Player
+            else if (hitAPlayer)
+            {
+                if (isEnemyBullet)
                 {
-                    if (!isEnemyBullet)
+                    PlayerHealth playerHealth = hit.collider.GetComponentInParent<PlayerHealth>();
+                    if (playerHealth != null)
                     {
-                        // Friendly Fire Protection: Let player bullets pass through other players
+                        playerHealth.TakeDamage(damage);
                     }
-                    else
-                    {
-                        // TODO: Add your player health hook here when ready
-                        // hit.collider.GetComponent<PlayerHealth>().TakeDamage(damage);
-                        Destroy(gameObject);
-                        return;
-                    }
+
+                    TriggerSparkAndDestroy(hit.point);
+                    return;
                 }
-                // Hit an Obstacle
-                else if (hit.collider.CompareTag("Obstacle") || hit.collider.gameObject.layer == LayerMask.NameToLayer("Obstacles"))
-                {
-                    Destroy(gameObject);
-                    return; // Stop moving immediately
-                }
+            }
+            // Hit an Obstacle
+            else if (hit.collider.CompareTag("Obstacle") || hit.collider.gameObject.layer == LayerMask.NameToLayer("Obstacles"))
+            {
+                TriggerSparkAndDestroy(hit.point);
+                return;
             }
         }
 
-        // Move the bullet locally on EVERY player's screen for perfectly smooth visuals
         transform.position += transform.up * stepDistance;
+    }
+
+    private void Update()
+    {
+        // Non-server instances handle local bullet visualization smoothly in standard Update frames
+        if (!IsServer)
+        {
+            float stepDistance = speed * Time.deltaTime;
+            transform.position += transform.up * stepDistance;
+        }
+    }
+
+    private void TriggerSparkAndDestroy(Vector2 hitPoint)
+    {
+        if (NetworkEffectManager.Instance != null)
+        {
+            NetworkEffectManager.Instance.PlaySparkClientRpc(hitPoint);
+        }
+
+        if (TryGetComponent(out NetworkObject netObj) && netObj.IsSpawned)
+        {
+            netObj.Despawn(true);
+        }
+        else
+        {
+            Destroy(gameObject);
+        }
     }
 }

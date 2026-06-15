@@ -2,7 +2,6 @@ using System.Collections.Generic;
 using Unity.Netcode;
 using UnityEngine;
 
-// This container packages all the info the UI needs to display a player correctly
 public struct ScoreboardEntry
 {
     public int PlayerNumber;
@@ -12,13 +11,11 @@ public struct ScoreboardEntry
 
 public class PlayerScore : NetworkBehaviour
 {
-    // NetworkVariable syncs the score across the entire network safely from the server
     public NetworkVariable<int> score = new NetworkVariable<int>(
         0, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
 
     public override void OnNetworkSpawn()
     {
-        // When any client spawns or a score changes, update the UI scoreboard
         score.OnValueChanged += OnScoreChanged;
         UpdateGlobalScoreboard();
     }
@@ -26,12 +23,7 @@ public class PlayerScore : NetworkBehaviour
     public override void OnNetworkDespawn()
     {
         score.OnValueChanged -= OnScoreChanged;
-
-        // Recalculate scoreboard if a player leaves mid-match
-        if (IsServer)
-        {
-            UpdateGlobalScoreboard();
-        }
+        if (IsServer) UpdateGlobalScoreboard();
     }
 
     private void OnScoreChanged(int oldVal, int newVal)
@@ -39,16 +31,9 @@ public class PlayerScore : NetworkBehaviour
         UpdateGlobalScoreboard();
     }
 
-    /// <summary>
-    /// Gathers all active player scores in the match, pushes the local player to the top,
-    /// and sends the formatted list to the GameUIManager.
-    /// </summary>
     public static void UpdateGlobalScoreboard()
     {
-        // Find all player score scripts currently active in the match
         PlayerScore[] players = FindObjectsByType<PlayerScore>(FindObjectsSortMode.None);
-
-        // Sort them strictly by Client ID so "Player 1", "Player 2", etc., are always assigned accurately
         System.Array.Sort(players, (a, b) => a.OwnerClientId.CompareTo(b.OwnerClientId));
 
         List<ScoreboardEntry> formattedEntries = new List<ScoreboardEntry>();
@@ -58,32 +43,48 @@ public class PlayerScore : NetworkBehaviour
         {
             ScoreboardEntry entry = new ScoreboardEntry
             {
-                PlayerNumber = i + 1, // Determines if they are Player 1, Player 2, etc.
+                PlayerNumber = i + 1,
                 Score = players[i].score.Value,
                 IsLocalPlayer = players[i].IsOwner
             };
 
-            // If this is our local player looking at the screen, hold onto their data separately
-            if (entry.IsLocalPlayer)
-            {
-                localPlayerEntry = entry;
-            }
-            else
-            {
-                formattedEntries.Add(entry); // Add everyone else to the standard list
-            }
+            if (entry.IsLocalPlayer) localPlayerEntry = entry;
+            else formattedEntries.Add(entry);
         }
 
-        // If a local player exists on this machine, shove them into the absolute top slot (Index 0)
-        if (localPlayerEntry.HasValue)
-        {
-            formattedEntries.Insert(0, localPlayerEntry.Value);
-        }
+        if (localPlayerEntry.HasValue) formattedEntries.Insert(0, localPlayerEntry.Value);
 
-        // Push the perfectly ordered list to the UI
-        if (GameUIManager.Instance != null)
+        if (GameUIManager.Instance != null && !GameUIManager.Instance.IsGameOver)
         {
             GameUIManager.Instance.RefreshScoreboard(formattedEntries);
         }
+    }
+
+    // 👈 NEW: Sorts the list purely by highest score for the Game Over screen
+    public static List<ScoreboardEntry> GetGameOverScoreboard()
+    {
+        PlayerScore[] players = FindObjectsByType<PlayerScore>(FindObjectsSortMode.None);
+        var orderedByClient = new List<PlayerScore>(players);
+        orderedByClient.Sort((a, b) => a.OwnerClientId.CompareTo(b.OwnerClientId));
+
+        List<ScoreboardEntry> entries = new List<ScoreboardEntry>();
+        for (int i = 0; i < orderedByClient.Count; i++)
+        {
+            entries.Add(new ScoreboardEntry
+            {
+                PlayerNumber = i + 1,
+                Score = orderedByClient[i].score.Value,
+                IsLocalPlayer = orderedByClient[i].IsOwner
+            });
+        }
+
+        // Sort descending (Highest score first)
+        entries.Sort((a, b) => b.Score.CompareTo(a.Score));
+        return entries;
+    }
+
+    public void ResetScore()
+    {
+        if (IsServer) score.Value = 0;
     }
 }

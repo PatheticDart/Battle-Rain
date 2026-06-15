@@ -10,7 +10,7 @@ public class NetworkEnemyShooter : NetworkBehaviour
     [SerializeField] private int bulletDamage = 10;
 
     [Header("Ranges")]
-    [SerializeField] private float firingRange = 10f; // 👈 New: Will only shoot if player is within this distance
+    [SerializeField] private float firingRange = 10f; // Will only shoot if player is within this distance
 
     [Header("Firing Mode")]
     [SerializeField] private bool isAutomatic = false;
@@ -38,11 +38,17 @@ public class NetworkEnemyShooter : NetworkBehaviour
     {
         if (!IsServer || controller.currentTarget == null) return;
 
+        // If the target player is dead, reset burst states and don't shoot!
+        if (controller.currentTarget.TryGetComponent<PlayerHealth>(out var targetHealth) && targetHealth.isDead.Value)
+        {
+            isBursting = false;
+            return;
+        }
+
         // Check distance to player before executing any shooting logic
         float distanceToPlayer = Vector2.Distance(transform.position, controller.currentTarget.position);
         if (distanceToPlayer > firingRange)
         {
-            // Too far away! Reset burst state and do not shoot.
             isBursting = false;
             return;
         }
@@ -104,10 +110,16 @@ public class NetworkEnemyShooter : NetworkBehaviour
         {
             projScript.speed = bulletSpeed;
             projScript.damage = bulletDamage;
-            projScript.ownerClientId = 999999; // Placeholder ID indicating an enemy fired it
+            projScript.ownerClientId = 999999; 
         }
 
         bullet.GetComponent<NetworkObject>().Spawn(true);
         Destroy(bullet, 3f);
+
+        // 👈 FIX: Route the audio through your centralized NetworkEffectManager system!
+        if (NetworkEffectManager.Instance != null)
+        {
+            NetworkEffectManager.Instance.PlayGunshotClientRpc(barrel.position, false);
+        }
     }
 }

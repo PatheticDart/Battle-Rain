@@ -78,6 +78,12 @@ public class NetworkEnemyController : NetworkBehaviour
 
         foreach (GameObject player in players)
         {
+            // 👈 FIX: Check if the player is dead. If they are, skip them entirely!
+            if (player.TryGetComponent<PlayerHealth>(out var playerHealth) && playerHealth.isDead.Value)
+            {
+                continue;
+            }
+
             float distance = Vector2.Distance(transform.position, player.transform.position);
             if (distance < closestDistance)
             {

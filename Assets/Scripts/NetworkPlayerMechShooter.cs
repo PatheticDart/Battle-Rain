@@ -1,17 +1,14 @@
+using System.Collections.Generic;
 using Unity.Netcode;
 using UnityEngine;
 
 public class NetworkPlayerMechShooter : NetworkBehaviour
 {
-    [Header("Weapon Settings")]
+    [Header("Base Weapon Settings")]
     [SerializeField] private GameObject bulletPrefab;
-    [SerializeField] private float fireRate = 0.2f;
+    [SerializeField] private float baseFireRate = 0.2f;
     [SerializeField] private float bulletSpeed = 12f;
-    [SerializeField] private int bulletDamage = 25; // 👈 New: Adjustable Player Damage
-
-    [Header("Upgrade System")]
-    public NetworkVariable<int> weaponLevel = new NetworkVariable<int>(
-        1, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
+    [SerializeField] private int baseBulletDamage = 25;
 
     [Header("Reference Required")]
     [SerializeField] private Transform upperBody; // Drag Player Mech Upper here
@@ -19,9 +16,13 @@ public class NetworkPlayerMechShooter : NetworkBehaviour
     private float nextFireTime;
     private Transform[] weaponBarrels = new Transform[5];
 
+    // Reference to our new upgrade manager
+    private PlayerUpgrades playerUpgrades;
+
     private void Awake()
     {
         FindBarrelsInHierarchy();
+        playerUpgrades = GetComponent<PlayerUpgrades>();
     }
 
     private void Update()
@@ -30,7 +31,9 @@ public class NetworkPlayerMechShooter : NetworkBehaviour
 
         if (Input.GetButton("Fire1") && Time.time >= nextFireTime)
         {
-            nextFireTime = Time.time + fireRate;
+            // Apply Fire Rate multiplier (higher multiplier = smaller delay between shots)
+            float currentFireRateDelay = baseFireRate / playerUpgrades.fireRateMultiplier.Value;
+            nextFireTime = Time.time + currentFireRateDelay;
 
             // Send the exact angle your client is looking at up to the Server RPC
             FireWeaponServerRpc(upperBody.eulerAngles.z);
@@ -40,15 +43,23 @@ public class NetworkPlayerMechShooter : NetworkBehaviour
     [ServerRpc]
     private void FireWeaponServerRpc(float clientAimAngle, ServerRpcParams serverRpcParams = default)
     {
-        int barrelsToFire = Mathf.Clamp(weaponLevel.Value, 1, 5);
         Quaternion fireRotation = Quaternion.Euler(0, 0, clientAimAngle);
-
-        // Get the ID of the specific client who clicked "Fire"
         ulong shooterId = serverRpcParams.Receive.SenderClientId;
 
-        for (int i = 0; i < barrelsToFire; i++)
+        // Apply Damage Multiplier
+        int finalDamage = Mathf.RoundToInt(baseBulletDamage * playerUpgrades.damageMultiplier.Value);
+
+        // 👈 NEW: Trigger the sound exactly ONCE per shot, regardless of barrel count!
+        if (NetworkEffectManager.Instance != null)
         {
-            Transform barrel = weaponBarrels[i];
+            NetworkEffectManager.Instance.PlayGunshotClientRpc(upperBody.position, true); // true = Player Sound
+        }
+
+        // Fetch exactly which barrels should be firing based on the current weapon level
+        List<Transform> activeBarrels = playerUpgrades.GetActiveBarrels(weaponBarrels);
+
+        foreach (Transform barrel in activeBarrels)
+        {
             if (barrel == null) continue;
 
             // Spawn bullet
@@ -59,7 +70,7 @@ public class NetworkPlayerMechShooter : NetworkBehaviour
             if (projScript != null)
             {
                 projScript.speed = bulletSpeed;
-                projScript.damage = bulletDamage;   // 👈 New: Hands damage off to the bullet
+                projScript.damage = finalDamage;
                 projScript.ownerClientId = shooterId;
             }
 
@@ -73,6 +84,7 @@ public class NetworkPlayerMechShooter : NetworkBehaviour
 
     private void FindBarrelsInHierarchy()
     {
+        // ⚠️ CRITICAL: Ensure your barrel child objects are named exactly "Barrel1", "Barrel2", etc.
         Transform[] allChildren = GetComponentsInChildren<Transform>(true);
         for (int i = 1; i <= 5; i++)
         {

@@ -8,11 +8,12 @@ TagManager:
   - Obstacle
   - Projectile
   - EnemyBullet
+  - PlayerBullet
   layers:
   - Default
   - TransparentFX
   - Ignore Raycast
-  - 
+  - Player
   - Water
   - UI
   - Obstacles
