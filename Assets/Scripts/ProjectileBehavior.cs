@@ -7,6 +7,35 @@ public class ProjectileBehavior : NetworkBehaviour
     [HideInInspector] public float speed = 12f;
     [HideInInspector] public int damage = 10;
 
+    // Projectiles are moved locally on clients for smooth visuals, so the
+    // runtime speed selected by the server must be replicated with the spawn.
+    private readonly NetworkVariable<float> replicatedSpeed = new NetworkVariable<float>(
+        12f, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
+
+    public void Configure(float projectileSpeed, int projectileDamage, ulong projectileOwnerClientId)
+    {
+        speed = projectileSpeed;
+        damage = projectileDamage;
+        ownerClientId = projectileOwnerClientId;
+        replicatedSpeed.Value = projectileSpeed;
+    }
+
+    public override void OnNetworkSpawn()
+    {
+        speed = replicatedSpeed.Value;
+        replicatedSpeed.OnValueChanged += OnReplicatedSpeedChanged;
+    }
+
+    public override void OnNetworkDespawn()
+    {
+        replicatedSpeed.OnValueChanged -= OnReplicatedSpeedChanged;
+    }
+
+    private void OnReplicatedSpeedChanged(float previousSpeed, float newSpeed)
+    {
+        speed = newSpeed;
+    }
+
     // 👈 FIXED: Server-authoritative raycasting shifted to FixedUpdate to stay perfectly in line with physics frames
     private void FixedUpdate()
     {
@@ -78,10 +107,11 @@ public class ProjectileBehavior : NetworkBehaviour
 
     private void TriggerSparkAndDestroy(Vector2 hitPoint)
     {
-        if (NetworkEffectManager.Instance != null)
-        {
-            NetworkEffectManager.Instance.PlaySparkClientRpc(hitPoint);
-        }
+        // Send the impact through the projectile's own network object before
+        // despawning it. The previous implementation sent the RPC through a
+        // separate scene singleton, which could be skipped for clients when
+        // the projectile despawn was processed in the same network tick.
+        PlayHitEffectClientRpc(hitPoint);
 
         if (TryGetComponent(out NetworkObject netObj) && netObj.IsSpawned)
         {
@@ -90,6 +120,15 @@ public class ProjectileBehavior : NetworkBehaviour
         else
         {
             Destroy(gameObject);
+        }
+    }
+
+    [ClientRpc]
+    private void PlayHitEffectClientRpc(Vector2 hitPoint)
+    {
+        if (NetworkEffectManager.Instance != null)
+        {
+            NetworkEffectManager.Instance.PlaySparkLocal(hitPoint);
         }
     }
 }

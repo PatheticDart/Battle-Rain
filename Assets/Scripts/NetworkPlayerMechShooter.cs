@@ -69,9 +69,7 @@ public class NetworkPlayerMechShooter : NetworkBehaviour
             ProjectileBehavior projScript = bullet.GetComponent<ProjectileBehavior>();
             if (projScript != null)
             {
-                projScript.speed = bulletSpeed;
-                projScript.damage = finalDamage;
-                projScript.ownerClientId = shooterId;
+                projScript.Configure(bulletSpeed, finalDamage, shooterId);
             }
 
             // Replicate across network

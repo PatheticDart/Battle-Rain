@@ -108,9 +108,7 @@ public class NetworkEnemyShooter : NetworkBehaviour
         ProjectileBehavior projScript = bullet.GetComponent<ProjectileBehavior>();
         if (projScript != null)
         {
-            projScript.speed = bulletSpeed;
-            projScript.damage = bulletDamage;
-            projScript.ownerClientId = 999999; 
+            projScript.Configure(bulletSpeed, bulletDamage, 999999);
         }
 
         bullet.GetComponent<NetworkObject>().Spawn(true);

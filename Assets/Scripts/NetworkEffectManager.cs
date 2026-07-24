@@ -46,6 +46,14 @@ public class NetworkEffectManager : NetworkBehaviour
     [ClientRpc]
     public void PlaySparkClientRpc(Vector3 position)
     {
+        PlaySparkLocal(position);
+    }
+
+    // Used by networked objects after their ClientRpc has arrived. Keeping the
+    // instantiation local avoids trying to send another RPC from a projectile
+    // that is being despawned in the same server tick.
+    public void PlaySparkLocal(Vector3 position)
+    {
         if (sparkPrefab != null)
         {
             GameObject fx = Instantiate(sparkPrefab, position, Quaternion.identity);
