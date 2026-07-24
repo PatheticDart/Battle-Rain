@@ -1,0 +1,242 @@
+EXTREME CUSTODIA - NEW FEATURE SETUP
+====================================
+
+This document covers the scene and prefab setup required for the recently added
+multiplayer systems.
+
+
+1. NETWORKED SCENE REQUIREMENTS
+-------------------------------
+
+The active gameplay scene must be registered in the NetworkManager scene list.
+
+Every networked scene object must contain a NetworkObject component. This
+includes:
+
+- Spawners
+- Guardians/totems
+- Defense structures
+- Any other scene object containing a NetworkBehaviour
+
+Do not place NetworkBehaviour scripts on objects without a NetworkObject.
+
+
+2. PLAYER PREFAB SETUP
+----------------------
+
+The player prefab must contain:
+
+- NetworkObject
+- PlayerHealth
+- PlayerScore
+- PlayerUpgrades
+- NetworkMechController
+- NetworkPlayerMechShooter
+
+PlayerHealth now inherits from HasHealth. Do not add a second health component
+to the player prefab.
+
+Confirm that the player prefab has:
+
+- Tag: Player
+- A Rigidbody2D
+- Player colliders
+- The correct upper-body and lower-body references
+- The correct bullet prefab assigned to NetworkPlayerMechShooter
+
+Health bars are created automatically when the player NetworkObject spawns.
+No health-bar prefab assignment is required.
+
+
+3. ENEMY PREFAB SETUP
+---------------------
+
+The enemy prefab must contain:
+
+- NetworkObject
+- EnemyHealth
+- NetworkEnemyController
+- NetworkEnemyShooter, if the enemy can fire
+- Rigidbody2D
+- Enemy colliders
+
+EnemyHealth now inherits from HasHealth. Do not add a second health component.
+
+Confirm that the enemy prefab has:
+
+- Tag: Enemy
+- Correct lower-body and upper-body references
+- Correct obstacle layer configuration
+- Correct enemy bullet prefab assignment, if applicable
+
+Enemy health bars are created automatically at runtime.
+
+
+4. HASHEALTH SETTINGS
+---------------------
+
+HasHealth is the shared health base class for players, enemies, and guardians.
+It provides server-authoritative current health and common damage/repair logic.
+
+The following components inherit from HasHealth:
+
+- PlayerHealth
+- EnemyHealth
+- GuardianHealth
+
+Health is synchronized using a NetworkVariable. Clients must never write to
+currentHealth directly.
+
+
+5. GUARDIAN/TOTEM SETUP
+-----------------------
+
+For every guardian or totem:
+
+1. Create a scene GameObject at the intended guardian position.
+2. Add a NetworkObject component.
+3. Add a GuardianHealth component.
+4. Add the guardian sprite or model as a child object.
+5. Assign the active visual to GuardianHealth.activeVisual.
+6. Optionally assign a disabled visual to GuardianHealth.disabledVisual.
+7. Configure the GuardianHealth values.
+
+Recommended default values:
+
+- Max Health: 1000
+- Interaction Radius: 2.5
+- Base Repair Cost: 100
+- Base Upgrade Cost: 250
+- Repair Percent: 0.25
+- Max Health Upgrade Multiplier: 1.25
+
+The current SampleScene uses the central Spawners object as the guardian
+NetworkObject and has a GuardianHealth component attached to it. Its child
+guardian visual is assigned as the active visual.
+
+If additional guardians are added, place them under the Spawners hierarchy or
+assign them explicitly to the NetworkEnemyWaveSpawner Guardians array.
+
+Guardian behavior:
+
+- Enemies damage guardians when they reach the guardian interaction radius.
+- At zero health, the guardian becomes disabled.
+- A disabled guardian remains repairable.
+- If all guardians are disabled, the run ends.
+- Repairing a guardian restores 25 percent of its maximum health by default.
+- If a guardian is already at maximum health, the repair action upgrades its
+  maximum health instead.
+
+
+6. GUARDIAN REPAIR AND UPGRADE INPUT
+------------------------------------
+
+Players use the E key near a guardian.
+
+The server validates:
+
+- The player is close enough to the guardian.
+- The match is active.
+- The player has enough run currency.
+
+If the guardian is damaged, E repairs it.
+If the guardian is at full health, E upgrades its maximum health.
+
+Repair and upgrade prices scale exponentially by wave:
+
+    cost = base cost * 2^(current wave - 1)
+
+Run currency is awarded when waves are cleared and is reset when a match is
+restarted.
+
+
+7. WAVE SPAWNER SETUP
+---------------------
+
+Select the Spawners object and confirm it contains:
+
+- NetworkObject
+- NetworkEnemyWaveSpawner
+- GuardianHealth, if the Spawners object is being used as a guardian
+
+Assign the following NetworkEnemyWaveSpawner fields:
+
+- Enemy Prefab
+- Enemy Spawn Points
+- Base Wave Quota
+- Quota Increase Per Wave
+- Spawn Rate
+- Delay Between Waves
+- Guardians, when guardians are not children of Spawners
+
+The enemy prefab assigned to Enemy Prefab must be a registered network prefab
+and must contain a NetworkObject.
+
+
+8. DEFENSE SETUP
+----------------
+
+For every defense structure:
+
+1. Create a scene GameObject at the defense location.
+2. Add NetworkObject.
+3. Add NetworkDefense.
+4. Add the defense visual as a child.
+5. Optionally create one visual object per defense level.
+6. Assign the visuals to NetworkDefense.levelVisuals in level order.
+
+Recommended default values:
+
+- Upgrade Cost: 250 score
+- Base Damage: 10
+- Attack Range: 7
+- Attack Cooldown: 0.75 seconds
+- Max Level: 5
+
+Defense structures automatically attack nearby enemies on the server.
+
+Players stand within 2.5 units of a defense and press E to upgrade it. The
+upgrade cost is deducted from the player's run score.
+
+
+9. GAME UI AND HEALTH BARS
+---------------------------
+
+The GameUIManager must remain attached to the existing screen-space Canvas.
+
+Offscreen teammate indicators are created automatically by GameUIManager.
+No arrow prefab or inspector assignment is required.
+
+Health bars are created automatically by HasHealth for every spawned client-side
+health object. No health-bar prefab or Canvas assignment is required.
+
+Health bar colors:
+
+- Red: enemies
+- Blue: players and teammates
+- Gold: guardians
+
+The existing gameplay Canvas must remain active for teammate arrows to display.
+
+
+10. TESTING CHECKLIST
+---------------------
+
+Run the game using Multiplayer Play Mode with one host and at least one client.
+
+- Confirm players, enemies, and guardians show health bars.
+- Damage an enemy and confirm its health bar updates on all clients.
+- Damage a teammate and confirm the teammate health bar updates.
+- Move a teammate outside the camera view and confirm an arrow appears.
+- Move the teammate back on screen and confirm the arrow disappears.
+- Allow enemies to damage a guardian.
+- Confirm the guardian visual disables at zero health.
+- Stand near the guardian and press E to repair it.
+- Confirm currency is deducted and health is restored.
+- Fill the guardian to maximum health and press E again.
+- Confirm maximum health increases and the guardian remains full.
+- Confirm guardian prices increase on later waves.
+- Confirm destroying all guardians triggers game over.
+- Restart the match and confirm health, currency, score, upgrades, and guardian
+  health reset correctly.
+

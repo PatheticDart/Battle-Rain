@@ -80,12 +80,52 @@ public class NetworkMechController : NetworkBehaviour
 
         // --- LOCAL PLAYER LOGIC (Runs with ZERO latency) ---
         HandleInput();
+        HandleDefenseInteraction();
         HandleUpperBodyRotation();
         HandleLowerBodyRotation();
 
         // Update network data so other players can see us
         netPosition.Value = rb.position;
         netIsWalking.Value = moveInput.sqrMagnitude > 0.01f;
+    }
+
+    private void HandleDefenseInteraction()
+    {
+        if (!Input.GetKeyDown(KeyCode.E)) return;
+
+        NetworkDefense[] defenses = FindObjectsByType<NetworkDefense>(FindObjectsSortMode.None);
+        NetworkDefense closest = null;
+        float closestDistance = 2.5f * 2.5f;
+        foreach (NetworkDefense defense in defenses)
+        {
+            float distance = ((Vector2)defense.transform.position - rb.position).sqrMagnitude;
+            if (distance <= closestDistance)
+            {
+                closestDistance = distance;
+                closest = defense;
+            }
+        }
+
+        if (closest != null)
+        {
+            closest.RequestUpgradeServerRpc();
+            return;
+        }
+
+        GuardianHealth[] guardians = FindObjectsByType<GuardianHealth>(FindObjectsSortMode.None);
+        GuardianHealth closestGuardian = null;
+        float closestGuardianDistance = float.MaxValue;
+        foreach (GuardianHealth guardian in guardians)
+        {
+            float distance = ((Vector2)guardian.transform.position - rb.position).sqrMagnitude;
+            if (distance <= guardian.InteractionRadius * guardian.InteractionRadius && distance < closestGuardianDistance)
+            {
+                closestGuardianDistance = distance;
+                closestGuardian = guardian;
+            }
+        }
+
+        if (closestGuardian != null) closestGuardian.RequestRepairOrUpgradeServerRpc();
     }
 
     private void FixedUpdate()

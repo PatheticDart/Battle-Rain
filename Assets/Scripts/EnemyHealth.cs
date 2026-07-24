@@ -1,33 +1,21 @@
 using Unity.Netcode;
 using UnityEngine;
 
-public class EnemyHealth : NetworkBehaviour
+public class EnemyHealth : HasHealth
 {
-    [SerializeField] private int maxHealth = 100;
     [SerializeField] private int scoreValue = 50; // Points given on kill
-
-    public NetworkVariable<int> currentHealth = new NetworkVariable<int>(
-        100, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
-
-    public override void OnNetworkSpawn()
-    {
-        if (IsServer) currentHealth.Value = maxHealth;
-    }
 
     // Called strictly by the Server via the Raycast Projectile
     public void TakeDamage(int damage, ulong shooterClientId)
     {
-        if (!IsServer) return;
-
-        currentHealth.Value -= damage;
-
-        if (currentHealth.Value <= 0)
-        {
-            Die(shooterClientId);
-        }
+        if (!IsServer || IsDestroyed) return;
+        pendingShooterClientId = shooterClientId;
+        base.TakeDamage(damage);
     }
 
-    private void Die(ulong shooterClientId)
+    private ulong pendingShooterClientId;
+
+    protected override void OnHealthDepleted()
     {
         if (IsServer)
         {
@@ -38,7 +26,7 @@ public class EnemyHealth : NetworkBehaviour
             }
 
             // Look up the specific Player network asset using the client identity payload
-            if (NetworkManager.Singleton.ConnectedClients.TryGetValue(shooterClientId, out var networkClient))
+            if (NetworkManager.Singleton.ConnectedClients.TryGetValue(pendingShooterClientId, out var networkClient))
             {
                 if (networkClient.PlayerObject != null)
                 {

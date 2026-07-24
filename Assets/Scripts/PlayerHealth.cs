@@ -1,19 +1,14 @@
 using Unity.Netcode;
 using UnityEngine;
 
-public class PlayerHealth : NetworkBehaviour
+public class PlayerHealth : HasHealth
 {
-    [Header("Health Settings")]
-    [SerializeField] private int maxHealth = 100;
-
-    public NetworkVariable<int> currentHealth = new NetworkVariable<int>(
-        100, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
-
     public NetworkVariable<bool> isDead = new NetworkVariable<bool>(
         false, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
 
     public override void OnNetworkSpawn()
     {
+        base.OnNetworkSpawn();
         if (IsServer)
         {
             // 👈 CRITICAL NETCODE FIX: If this is a client-owned player object living on the server,
@@ -60,6 +55,7 @@ public class PlayerHealth : NetworkBehaviour
 
     public override void OnNetworkDespawn()
     {
+        base.OnNetworkDespawn();
         currentHealth.OnValueChanged -= OnHealthChanged;
         isDead.OnValueChanged -= OnDeathStateChanged;
     }
@@ -96,14 +92,13 @@ public class PlayerHealth : NetworkBehaviour
     [ServerRpc(RequireOwnership = false)]
     public void TakeDamageServerRpc(int damage) => TakeDamage(damage);
 
-    public void TakeDamage(int damage)
+    public override void TakeDamage(int damage)
     {
         if (!IsServer || isDead.Value) return;
-        currentHealth.Value -= damage;
-        if (currentHealth.Value <= 0) Die();
+        base.TakeDamage(damage);
     }
 
-    private void Die()
+    protected override void OnHealthDepleted()
     {
         if (!IsServer) return;
         isDead.Value = true;
@@ -155,13 +150,13 @@ public class PlayerHealth : NetworkBehaviour
         {
             if (!player.isDead.Value) { allDead = false; break; }
         }
-        if (allDead) GameUIManager.Instance.TriggerGameOverClientRpc();
+        if (allDead && GameUIManager.Instance != null) GameUIManager.Instance.EndRunServer();
     }
 
     public void ApplyHealthUpgrade(float multiplier)
     {
         if (!IsServer || isDead.Value) return;
-        maxHealth = Mathf.RoundToInt(maxHealth * multiplier);
+        SetMaxHealth(Mathf.RoundToInt(maxHealth * multiplier), false);
         currentHealth.Value = Mathf.RoundToInt(currentHealth.Value * multiplier);
     }
 
@@ -169,6 +164,6 @@ public class PlayerHealth : NetworkBehaviour
     {
         if (!IsServer || isDead.Value) return;
         int healAmount = Mathf.RoundToInt(maxHealth * percentage);
-        currentHealth.Value = Mathf.Clamp(currentHealth.Value + healAmount, 0, maxHealth);
+        Repair(healAmount);
     }
 }

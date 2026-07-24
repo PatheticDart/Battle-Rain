@@ -23,6 +23,7 @@ public class NetworkEnemyController : NetworkBehaviour
 
     private Rigidbody2D rb;
     private Vector2 currentMoveInput;
+    private float nextGuardianAttackTime;
 
     private readonly NetworkVariable<Vector2> netPosition = new NetworkVariable<Vector2>(
         Vector2.zero, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
@@ -58,10 +59,28 @@ public class NetworkEnemyController : NetworkBehaviour
         }
 
         FindClosestPlayer();
+        TryAttackGuardian();
         CalculateMovement();
         HandleRotations();
 
         netPosition.Value = rb.position;
+    }
+
+    private void TryAttackGuardian()
+    {
+        NetworkEnemyWaveSpawner spawner = FindFirstObjectByType<NetworkEnemyWaveSpawner>();
+        if (spawner == null || Time.time < nextGuardianAttackTime) return;
+
+        foreach (GuardianHealth guardian in spawner.Guardians)
+        {
+            if (guardian == null || guardian.IsDestroyed) continue;
+            if (Vector2.Distance(transform.position, guardian.transform.position) <= guardian.InteractionRadius)
+            {
+                guardian.TakeDamage(10);
+                nextGuardianAttackTime = Time.time + 1f;
+                break;
+            }
+        }
     }
 
     private void FixedUpdate()

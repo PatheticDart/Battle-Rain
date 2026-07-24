@@ -29,9 +29,44 @@ public class NetworkEnemyWaveSpawner : NetworkBehaviour
     private bool hasSpawningStarted = false;
     private float nextSpawnTime;
 
+    [Header("Guardian Objective")]
+    [SerializeField] private GuardianHealth[] guardians = new GuardianHealth[0];
+
+    public int CurrentWave => currentWave;
+    public GuardianHealth[] Guardians => GetGuardians();
+
     public override void OnNetworkSpawn()
     {
         // Spawner remains completely idle on start until explicitly commanded by the host
+    }
+
+    public void DamageGuardian(int damage)
+    {
+        if (!IsServer || !hasSpawningStarted) return;
+        foreach (GuardianHealth guardian in GetGuardians())
+            if (guardian != null && !guardian.IsDestroyed) guardian.TakeDamage(damage);
+
+        bool allDestroyed = true;
+        foreach (GuardianHealth guardian in GetGuardians())
+            if (guardian != null && !guardian.IsDestroyed) allDestroyed = false;
+
+        if (allDestroyed && GameUIManager.Instance != null) GameUIManager.Instance.EndRunServer();
+    }
+
+    public void CheckGuardianObjective()
+    {
+        if (!IsServer) return;
+        GuardianHealth[] currentGuardians = GetGuardians();
+        if (currentGuardians.Length == 0) return;
+        foreach (GuardianHealth guardian in currentGuardians)
+            if (guardian != null && !guardian.IsDestroyed) return;
+        if (GameUIManager.Instance != null) GameUIManager.Instance.EndRunServer();
+    }
+
+    private GuardianHealth[] GetGuardians()
+    {
+        if (guardians != null && guardians.Length > 0) return guardians;
+        return GetComponentsInChildren<GuardianHealth>(true);
     }
 
     /// <summary>
@@ -99,7 +134,7 @@ public class NetworkEnemyWaveSpawner : NetworkBehaviour
         if (healthScript != null)
         {
             int scaledHP = Mathf.RoundToInt(100 * currentHealthMultiplier);
-            healthScript.currentHealth.Value = scaledHP;
+            healthScript.SetMaxHealth(scaledHP);
         }
 
         enemyInstance.GetComponent<NetworkObject>().Spawn(true);
@@ -136,6 +171,7 @@ public class NetworkEnemyWaveSpawner : NetworkBehaviour
                 if (playerStats != null)
                 {
                     playerStats.score.Value += pointsReward;
+                    playerStats.runCurrency.Value += Mathf.Max(1, pointsReward / 10);
                     Debug.Log($"Awarded {pointsReward} wave reward points to Client ID: {client.ClientId}");
                 }
             }
@@ -165,6 +201,8 @@ public class NetworkEnemyWaveSpawner : NetworkBehaviour
         enemiesSpawnedSoFarThisWave = 0;
         isIntermissionActive = false;
         hasSpawningStarted = true;
+        foreach (GuardianHealth guardian in GetGuardians())
+            if (guardian != null) guardian.SetMaxHealth(guardian.MaxHealth);
 
         // Launch a fresh Wave 1
         StartNextWave();

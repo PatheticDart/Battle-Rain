@@ -63,6 +63,7 @@ public class GameUIManager : NetworkBehaviour
 
     private List<PlayerHealth> spectatablePlayers = new List<PlayerHealth>();
     private int currentSpectateIndex = 0;
+    private bool runRewardsGranted;
 
     public static GameUIManager Instance { get; private set; }
 
@@ -70,6 +71,9 @@ public class GameUIManager : NetworkBehaviour
     {
         if (Instance == null) Instance = this;
         else Destroy(gameObject);
+
+        if (GetComponent<OffscreenTeammateIndicators>() == null)
+            gameObject.AddComponent<OffscreenTeammateIndicators>();
     }
 
     private async void Start()
@@ -143,6 +147,21 @@ public class GameUIManager : NetworkBehaviour
         }
     }
 
+    public void EndRunServer()
+    {
+        if (!IsServer || IsGameOver) return;
+
+        IsGameOver = true;
+        NetworkEnemyWaveSpawner spawner = FindFirstObjectByType<NetworkEnemyWaveSpawner>();
+        int waveReached = spawner != null ? spawner.CurrentWave : 1;
+        if (!runRewardsGranted)
+        {
+            runRewardsGranted = true;
+            PlayerScore.AwardRunRewardsToPlayers(waveReached);
+        }
+        TriggerGameOverClientRpc();
+    }
+
     [ClientRpc]
     private void AlertClientsMatchStartedClientRpc()
     {
@@ -175,6 +194,9 @@ public class GameUIManager : NetworkBehaviour
     public void RestartMatch()
     {
         if (!IsServer) return;
+
+        IsGameOver = false;
+        runRewardsGranted = false;
 
         NetworkEnemyWaveSpawner spawner = FindFirstObjectByType<NetworkEnemyWaveSpawner>();
         if (spawner != null) spawner.ResetSpawner();
@@ -350,7 +372,17 @@ public class GameUIManager : NetworkBehaviour
         if (statusText != null) statusText.text = message;
     }
 
-    public void UpdateHUDWaveDisplay(int currentWave) => waveNumberText.text = $"WAVE: {currentWave}";
+    public void UpdateHUDWaveDisplay(int currentWave)
+    {
+        if (IsServer) UpdateHUDWaveDisplayClientRpc(currentWave);
+        else if (waveNumberText != null) waveNumberText.text = $"WAVE: {currentWave}";
+    }
+
+    [ClientRpc]
+    private void UpdateHUDWaveDisplayClientRpc(int currentWave)
+    {
+        if (waveNumberText != null) waveNumberText.text = $"WAVE: {currentWave}";
+    }
     public void UpdateHUDHealthDisplay(int currentHP, int maxHP) => healthStatusText.text = $"HP: {currentHP} / {maxHP}";
 
     private void HideAllScoreTexts()

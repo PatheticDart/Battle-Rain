@@ -13,9 +13,17 @@ public class PlayerScore : NetworkBehaviour
 {
     public NetworkVariable<int> score = new NetworkVariable<int>(
         0, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
+    public NetworkVariable<int> runCurrency = new NetworkVariable<int>(
+        0, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
+
+    [HideInInspector] public int accountLevel = 1;
+    [HideInInspector] public int accountXp;
+    [HideInInspector] public int accountCurrency;
+    private const string ProgressKeyPrefix = "ExtremeCustodia.Progress.";
 
     public override void OnNetworkSpawn()
     {
+        if (IsOwner) LoadAccountProgress();
         score.OnValueChanged += OnScoreChanged;
         UpdateGlobalScoreboard();
     }
@@ -85,6 +93,60 @@ public class PlayerScore : NetworkBehaviour
 
     public void ResetScore()
     {
-        if (IsServer) score.Value = 0;
+        if (IsServer)
+        {
+            score.Value = 0;
+            runCurrency.Value = 0;
+        }
+    }
+
+    public static void AwardRunRewardsToPlayers(int waveReached)
+    {
+        if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsServer) return;
+
+        int xpReward = Mathf.Max(25, waveReached * 50);
+        int currencyReward = Mathf.Max(10, waveReached * 10);
+        foreach (NetworkClient client in NetworkManager.Singleton.ConnectedClientsList)
+        {
+            if (client.PlayerObject == null) continue;
+            PlayerScore playerScore = client.PlayerObject.GetComponent<PlayerScore>();
+            if (playerScore != null) playerScore.SaveRunRewardsClientRpc(xpReward, currencyReward);
+        }
+    }
+
+    [ClientRpc]
+    private void SaveRunRewardsClientRpc(int xpReward, int currencyReward)
+    {
+        if (!IsOwner) return;
+        accountXp += Mathf.Max(0, xpReward);
+        accountCurrency += Mathf.Max(0, currencyReward);
+
+        int xpForNextLevel = GetXpRequiredForNextLevel();
+        while (accountXp >= xpForNextLevel)
+        {
+            accountXp -= xpForNextLevel;
+            accountLevel++;
+            xpForNextLevel = GetXpRequiredForNextLevel();
+        }
+        SaveAccountProgress();
+    }
+
+    private int GetXpRequiredForNextLevel() => 100 + ((accountLevel - 1) * 50);
+
+    private void LoadAccountProgress()
+    {
+        string key = ProgressKeyPrefix + NetworkManager.Singleton.LocalClientId;
+        accountLevel = PlayerPrefs.GetInt(key + ".Level", 1);
+        accountXp = PlayerPrefs.GetInt(key + ".XP", 0);
+        accountCurrency = PlayerPrefs.GetInt(key + ".Currency", 0);
+    }
+
+    private void SaveAccountProgress()
+    {
+        string key = ProgressKeyPrefix + NetworkManager.Singleton.LocalClientId;
+        PlayerPrefs.SetInt(key + ".Level", accountLevel);
+        PlayerPrefs.SetInt(key + ".XP", accountXp);
+        PlayerPrefs.SetInt(key + ".Currency", accountCurrency);
+        PlayerPrefs.Save();
     }
 }
