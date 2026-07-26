@@ -174,6 +174,7 @@ MonoBehaviour:
   moveSpeed: 2
   minEngagementDistance: 3
   maxEngagementDistance: 5
+  playerApproachDistance: 7
   lowerRotationSpeed: 300
   upperRotationSpeed: 200
   sensorLength: 2
@@ -201,7 +202,8 @@ MonoBehaviour:
   barrel: {fileID: 5797097442317370418}
   bulletSpeed: 8
   bulletDamage: 5
-  firingRange: 9
+  bulletLifetime: 2
+  firingRange: 8
   isAutomatic: 0
   shotsPerBurst: 3
   burstInterval: 2
@@ -221,12 +223,12 @@ MonoBehaviour:
   m_EditorClassIdentifier: '::'
   ShowTopMostFoldoutHeaderGroup: 1
   maxHealth: 100
-  scoreValue: 50
   currentHealth:
     UpdateTraits:
       MinSecondsBetweenUpdates: 0
       MaxSecondsBetweenUpdates: 0
     m_InternalValue: 100
+  scoreValue: 50
 --- !u!1 &5553196681405754432
 GameObject:
   m_ObjectHideFlags: 0

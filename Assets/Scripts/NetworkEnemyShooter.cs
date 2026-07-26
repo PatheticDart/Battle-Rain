@@ -8,6 +8,7 @@ public class NetworkEnemyShooter : NetworkBehaviour
     [SerializeField] private Transform barrel;
     [SerializeField] private float bulletSpeed = 8f;
     [SerializeField] private int bulletDamage = 10;
+    [SerializeField] private float bulletLifetime = 3f; // 👈 Configurable bullet lifetime (in seconds)
 
     [Header("Ranges")]
     [SerializeField] private float firingRange = 10f; // Will only shoot if player is within this distance
@@ -112,9 +113,8 @@ public class NetworkEnemyShooter : NetworkBehaviour
         }
 
         bullet.GetComponent<NetworkObject>().Spawn(true);
-        Destroy(bullet, 3f);
+        Destroy(bullet, bulletLifetime); // 👈 Uses the configurable lifetime setting
 
-        // 👈 FIX: Route the audio through your centralized NetworkEffectManager system!
         if (NetworkEffectManager.Instance != null)
         {
             NetworkEffectManager.Instance.PlayGunshotClientRpc(barrel.position, false);

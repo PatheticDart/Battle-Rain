@@ -15,12 +15,19 @@ public class NetworkEffectManager : NetworkBehaviour
 
     [Header("Audio Settings - Weapons")]
     [SerializeField] private AudioClip playerGunshotSound;
-    [SerializeField][Range(0f, 1f)] private float playerGunshotVolume = 0.5f; // 👈 NEW
+    [SerializeField][Range(0f, 1f)] private float playerGunshotVolume = 0.5f; 
+    
+    [SerializeField] private AudioClip playerLaserShotSound; // 👈 NEW
+    [SerializeField][Range(0f, 1f)] private float playerLaserVolume = 0.5f; // 👈 NEW
+    
     [SerializeField] private AudioClip enemyGunshotSound;
-    [SerializeField][Range(0f, 1f)] private float enemyGunshotVolume = 0.5f; // 👈 NEW
+    [SerializeField][Range(0f, 1f)] private float enemyGunshotVolume = 0.5f; 
+    
+    [SerializeField] private AudioClip defenseTurretShotSound; // 👈 NEW
+    [SerializeField][Range(0f, 1f)] private float defenseTurretVolume = 0.5f; // 👈 NEW
 
     [Header("Audio Settings - Movement")]
-    [SerializeField] private AudioClip[] footstepSounds; // Array so footsteps don't sound repetitive
+    [SerializeField] private AudioClip[] footstepSounds; 
     [SerializeField][Range(0f, 1f)] private float footstepVolume = 0.3f;
 
     private void Awake()
@@ -49,9 +56,6 @@ public class NetworkEffectManager : NetworkBehaviour
         PlaySparkLocal(position);
     }
 
-    // Used by networked objects after their ClientRpc has arrived. Keeping the
-    // instantiation local avoids trying to send another RPC from a projectile
-    // that is being despawned in the same server tick.
     public void PlaySparkLocal(Vector3 position)
     {
         if (sparkPrefab != null)
@@ -65,8 +69,6 @@ public class NetworkEffectManager : NetworkBehaviour
     public void PlayGunshotClientRpc(Vector3 position, bool isPlayer)
     {
         AudioClip clipToPlay = isPlayer ? playerGunshotSound : enemyGunshotSound;
-
-        // 👈 NEW: Check which volume slider to use
         float volumeToPlay = isPlayer ? playerGunshotVolume : enemyGunshotVolume;
 
         if (clipToPlay != null)
@@ -75,12 +77,30 @@ public class NetworkEffectManager : NetworkBehaviour
         }
     }
 
-    // 👈 NEW: Called locally by Animation Events! (No RPC needed)
+    // 👈 NEW: Dedicated RPC for the Laser
+    [ClientRpc]
+    public void PlayLaserClientRpc(Vector3 position)
+    {
+        if (playerLaserShotSound != null)
+        {
+            AudioSource.PlayClipAtPoint(playerLaserShotSound, position, playerLaserVolume);
+        }
+    }
+
+    // 👈 NEW: Dedicated RPC for the Turret
+    [ClientRpc]
+    public void PlayTurretClientRpc(Vector3 position)
+    {
+        if (defenseTurretShotSound != null)
+        {
+            AudioSource.PlayClipAtPoint(defenseTurretShotSound, position, defenseTurretVolume);
+        }
+    }
+
     public void PlayFootstepLocal(Vector3 position)
     {
         if (footstepSounds != null && footstepSounds.Length > 0)
         {
-            // Pick a random footstep sound from the array for variety
             AudioClip clip = footstepSounds[Random.Range(0, footstepSounds.Length)];
             if (clip != null)
             {

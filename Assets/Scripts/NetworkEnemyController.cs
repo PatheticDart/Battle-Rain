@@ -7,13 +7,18 @@ public class NetworkEnemyController : NetworkBehaviour
     [SerializeField] private float moveSpeed = 3f;
     [SerializeField] private float minEngagementDistance = 4f;
     [SerializeField] private float maxEngagementDistance = 8f;
+    [SerializeField] private float playerApproachDistance = 15f; 
     [SerializeField] private float lowerRotationSpeed = 300f;
     [SerializeField] private float upperRotationSpeed = 200f;
 
     [Header("Obstacle Avoidance")]
-    [SerializeField] private float sensorLength = 2.0f;      // How far ahead the tank looks for walls
-    [SerializeField] private float sideSensorAngle = 30f;    // Angle of diagonal left/right whisker sensors
-    [SerializeField] private LayerMask obstacleLayer;        // Set this to your "Obstacles" layer in the inspector
+    [SerializeField] private float sensorLength = 2.0f;      
+    [SerializeField] private float sideSensorAngle = 30f;    
+    [SerializeField] private LayerMask obstacleLayer;        
+
+    [Header("Swarm Behavior")]
+    [SerializeField] private float separationRadius = 1.5f; // How far to look for other enemies
+    [SerializeField] private float separationWeight = 0.6f; // How strongly to push away from them
 
     [Header("Body Parts")]
     [SerializeField] private Transform lowerBody;
@@ -24,6 +29,9 @@ public class NetworkEnemyController : NetworkBehaviour
     private Rigidbody2D rb;
     private Vector2 currentMoveInput;
     private float nextGuardianAttackTime;
+    private NetworkEnemyWaveSpawner waveSpawner; 
+    
+    private float avoidanceSteer; 
 
     private readonly NetworkVariable<Vector2> netPosition = new NetworkVariable<Vector2>(
         Vector2.zero, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
@@ -35,6 +43,9 @@ public class NetworkEnemyController : NetworkBehaviour
     private void Awake()
     {
         rb = GetComponent<Rigidbody2D>();
+        
+        // 👈 NEW: Randomize initial steer direction so swarms naturally split around walls
+        avoidanceSteer = Random.value > 0.5f ? 1f : -1f; 
     }
 
     public override void OnNetworkSpawn()
@@ -43,6 +54,10 @@ public class NetworkEnemyController : NetworkBehaviour
         {
             rb.bodyType = RigidbodyType2D.Kinematic;
             rb.simulated = false;
+        }
+        else
+        {
+            waveSpawner = FindFirstObjectByType<NetworkEnemyWaveSpawner>();
         }
     }
 
@@ -58,7 +73,7 @@ public class NetworkEnemyController : NetworkBehaviour
             return;
         }
 
-        FindClosestPlayer();
+        FindTarget(); 
         TryAttackGuardian();
         CalculateMovement();
         HandleRotations();
@@ -68,10 +83,10 @@ public class NetworkEnemyController : NetworkBehaviour
 
     private void TryAttackGuardian()
     {
-        NetworkEnemyWaveSpawner spawner = FindFirstObjectByType<NetworkEnemyWaveSpawner>();
-        if (spawner == null || Time.time < nextGuardianAttackTime) return;
+        if (waveSpawner == null) waveSpawner = FindFirstObjectByType<NetworkEnemyWaveSpawner>();
+        if (waveSpawner == null || Time.time < nextGuardianAttackTime) return;
 
-        foreach (GuardianHealth guardian in spawner.Guardians)
+        foreach (GuardianHealth guardian in waveSpawner.Guardians)
         {
             if (guardian == null || guardian.IsDestroyed) continue;
             if (Vector2.Distance(transform.position, guardian.transform.position) <= guardian.InteractionRadius)
@@ -89,27 +104,56 @@ public class NetworkEnemyController : NetworkBehaviour
         rb.linearVelocity = currentMoveInput * moveSpeed;
     }
 
-    private void FindClosestPlayer()
+    private void FindTarget()
     {
         GameObject[] players = GameObject.FindGameObjectsWithTag("Player");
-        float closestDistance = Mathf.Infinity;
+        float closestPlayerDistance = Mathf.Infinity;
         Transform closestPlayer = null;
 
         foreach (GameObject player in players)
         {
-            // 👈 FIX: Check if the player is dead. If they are, skip them entirely!
             if (player.TryGetComponent<PlayerHealth>(out var playerHealth) && playerHealth.isDead.Value)
-            {
                 continue;
-            }
 
             float distance = Vector2.Distance(transform.position, player.transform.position);
-            if (distance < closestDistance)
+            if (distance < closestPlayerDistance)
             {
-                closestDistance = distance;
+                closestPlayerDistance = distance;
                 closestPlayer = player.transform;
             }
         }
+
+        if (closestPlayer != null && closestPlayerDistance <= playerApproachDistance)
+        {
+            currentTarget = closestPlayer;
+            return;
+        }
+
+        if (waveSpawner == null) waveSpawner = FindFirstObjectByType<NetworkEnemyWaveSpawner>();
+        if (waveSpawner != null)
+        {
+            float closestGuardianDistance = Mathf.Infinity;
+            Transform closestGuardian = null;
+
+            foreach (GuardianHealth guardian in waveSpawner.Guardians)
+            {
+                if (guardian == null || guardian.IsDestroyed) continue;
+
+                float distance = Vector2.Distance(transform.position, guardian.transform.position);
+                if (distance < closestGuardianDistance)
+                {
+                    closestGuardianDistance = distance;
+                    closestGuardian = guardian.transform;
+                }
+            }
+
+            if (closestGuardian != null)
+            {
+                currentTarget = closestGuardian;
+                return;
+            }
+        }
+
         currentTarget = closestPlayer;
     }
 
@@ -124,24 +168,32 @@ public class NetworkEnemyController : NetworkBehaviour
         float distanceToTarget = Vector2.Distance(transform.position, currentTarget.position);
         Vector2 directionToTarget = (currentTarget.position - transform.position).normalized;
 
+        float currentMaxEngagement = maxEngagementDistance;
+        float currentMinEngagement = minEngagementDistance;
+
+        if (currentTarget.TryGetComponent<GuardianHealth>(out var guardian))
+        {
+            currentMaxEngagement = guardian.InteractionRadius * 0.9f; 
+            currentMinEngagement = 0f; 
+        }
+
         Vector2 desiredDirection = Vector2.zero;
 
-        if (distanceToTarget > maxEngagementDistance)
+        if (distanceToTarget > currentMaxEngagement)
         {
             desiredDirection = directionToTarget;
         }
-        else if (distanceToTarget < minEngagementDistance)
+        else if (distanceToTarget < currentMinEngagement)
         {
             desiredDirection = -directionToTarget;
         }
-        else
-        {
-            desiredDirection = Vector2.zero; // Comfortable sweet spot, don't move forward/backward
-        }
 
-        // Only apply avoidance math if the tank actually wants to travel somewhere
         if (desiredDirection != Vector2.zero)
         {
+            // 👈 NEW: Step 1. Apply Flocking/Separation so they don't clump
+            desiredDirection = ApplySwarmSeparation(desiredDirection);
+            
+            // 👈 NEW: Step 2. Navigate around hard walls using the adjusted direction
             currentMoveInput = ApplyObstacleAvoidance(desiredDirection);
         }
         else
@@ -150,58 +202,107 @@ public class NetworkEnemyController : NetworkBehaviour
         }
     }
 
+    // 👈 NEW: Pushes enemies away from each other if they get too close
+    private Vector2 ApplySwarmSeparation(Vector2 baseDirection)
+    {
+        Collider2D[] neighbors = Physics2D.OverlapCircleAll(transform.position, separationRadius);
+        Vector2 separationForce = Vector2.zero;
+        int count = 0;
+
+        foreach (var col in neighbors)
+        {
+            // Only care about other enemies, ignore self
+            if (col.gameObject != gameObject && col.CompareTag("Enemy"))
+            {
+                Vector2 diff = transform.position - col.transform.position;
+                float dist = diff.magnitude;
+                if (dist > 0.01f) // Prevent divide by zero
+                {
+                    // The closer they are, the harder they push away
+                    separationForce += (diff.normalized / dist);
+                    count++;
+                }
+            }
+        }
+
+        if (count > 0)
+        {
+            separationForce /= count;
+            // Blend the separation force into their intended path
+            return (baseDirection + (separationForce * separationWeight)).normalized;
+        }
+
+        return baseDirection;
+    }
+
     private Vector2 ApplyObstacleAvoidance(Vector2 moveDir)
     {
-        // Generate right/left diagonal whiskers
         Vector2 leftWhiskerDir = Quaternion.Euler(0, 0, sideSensorAngle) * moveDir;
         Vector2 rightWhiskerDir = Quaternion.Euler(0, 0, -sideSensorAngle) * moveDir;
 
-        // Cast out rays to probe for walls
-        RaycastHit2D centerHit = Physics2D.Raycast(transform.position, moveDir, sensorLength, obstacleLayer);
-        RaycastHit2D leftHit = Physics2D.Raycast(transform.position, leftWhiskerDir, sensorLength * 0.75f, obstacleLayer);
-        RaycastHit2D rightHit = Physics2D.Raycast(transform.position, rightWhiskerDir, sensorLength * 0.75f, obstacleLayer);
+        RaycastHit2D centerHit = GetObstacleHit(transform.position, moveDir, sensorLength);
+        RaycastHit2D leftHit = GetObstacleHit(transform.position, leftWhiskerDir, sensorLength);
+        RaycastHit2D rightHit = GetObstacleHit(transform.position, rightWhiskerDir, sensorLength);
 
-        // Debug visualization lines inside Unity's scene editor
-        Debug.DrawRay(transform.position, moveDir * sensorLength, centerHit ? Color.red : Color.green);
-        Debug.DrawRay(transform.position, leftWhiskerDir * (sensorLength * 0.75f), leftHit ? Color.red : Color.green);
-        Debug.DrawRay(transform.position, rightWhiskerDir * (sensorLength * 0.75f), rightHit ? Color.red : Color.green);
+        Debug.DrawRay(transform.position, moveDir * sensorLength, centerHit.collider != null ? Color.red : Color.green);
+        Debug.DrawRay(transform.position, leftWhiskerDir * sensorLength, leftHit.collider != null ? Color.red : Color.green);
+        Debug.DrawRay(transform.position, rightWhiskerDir * sensorLength, rightHit.collider != null ? Color.red : Color.green);
 
         Vector2 avoidanceDir = Vector2.zero;
 
-        // CENTER HIT: The tank is driving straight into a flat wall
         if (centerHit.collider != null)
         {
-            // Calculate the "Tangent" (the line perfectly parallel to the wall)
             Vector2 slideDirection = new Vector2(-centerHit.normal.y, centerHit.normal.x);
+            float dot = Vector2.Dot(slideDirection, moveDir);
 
-            // Make sure the tank picks the slide direction that gets it closer to the player, not further away
-            if (Vector2.Dot(slideDirection, moveDir) < 0)
+            // 👈 FIX: Increased this from 0.1f to 0.5f. 
+            // They are now much more stubborn and will stick to their initial dodge 
+            // direction unless the wall is at a very sharp, clear angle.
+            if (Mathf.Abs(dot) > 0.5f)
             {
-                slideDirection = -slideDirection;
+                avoidanceSteer = Mathf.Sign(dot);
             }
 
-            // Heavily prioritize sliding, with a slight push off the wall to prevent scraping
+            slideDirection *= avoidanceSteer;
+            
             avoidanceDir = (slideDirection * 2f) + (centerHit.normal * 1f);
         }
-        // LEFT HIT: Glancing blow on the left, steer right
         else if (leftHit.collider != null)
         {
             avoidanceDir = rightWhiskerDir + leftHit.normal;
         }
-        // RIGHT HIT: Glancing blow on the right, steer left
         else if (rightHit.collider != null)
         {
             avoidanceDir = leftWhiskerDir + rightHit.normal;
         }
 
-        // If we need to avoid something, aggressively overwrite the original movement direction
         if (avoidanceDir != Vector2.zero)
         {
-            // We use Lerp to smoothly blend 80% avoidance and 20% original intent so it doesn't snap unnaturally
             return Vector2.Lerp(moveDir, avoidanceDir.normalized, 0.8f).normalized;
         }
 
-        return moveDir; // Path is clear, keep going straight!
+        return moveDir; 
+    }
+
+    private RaycastHit2D GetObstacleHit(Vector2 origin, Vector2 direction, float distance)
+    {
+        RaycastHit2D[] hits = Physics2D.RaycastAll(origin, direction, distance, obstacleLayer);
+        foreach (var hit in hits)
+        {
+            if (hit.collider == null) continue;
+
+            if (hit.transform == transform || hit.transform.IsChildOf(transform)) 
+                continue;
+
+            if (currentTarget != null)
+            {
+                if (hit.transform == currentTarget || hit.transform.IsChildOf(currentTarget) || currentTarget.IsChildOf(hit.transform))
+                    continue;
+            }
+
+            return hit;
+        }
+        return default;
     }
 
     private void HandleRotations()

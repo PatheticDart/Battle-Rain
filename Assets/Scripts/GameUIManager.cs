@@ -60,6 +60,7 @@ public class GameUIManager : NetworkBehaviour
     [HideInInspector] public Transform CurrentCameraTarget;
     [HideInInspector] public bool IsGameOver = false;
     [HideInInspector] public NetworkVariable<bool> matchStarted = new NetworkVariable<bool>(false);
+    [HideInInspector] public NetworkVariable<int> currentWaveNumber = new NetworkVariable<int>(1);
 
     private List<PlayerHealth> spectatablePlayers = new List<PlayerHealth>();
     private int currentSpectateIndex = 0;
@@ -94,6 +95,28 @@ public class GameUIManager : NetworkBehaviour
             SetStatus("Unity Services ready.");
         }
         catch (Exception e) { SetStatus("Services failed."); Debug.LogError(e); }
+    }
+
+    public override void OnNetworkSpawn()
+    {
+        // Update text whenever the wave changes
+        currentWaveNumber.OnValueChanged += UpdateWaveText;
+        
+        // Immediately update text for hot-joiners using the current value
+        UpdateWaveText(0, currentWaveNumber.Value);
+    }
+
+    public override void OnNetworkDespawn()
+    {
+        currentWaveNumber.OnValueChanged -= UpdateWaveText;
+    }
+
+    private void UpdateWaveText(int previousWave, int currentWave)
+    {
+        if (waveNumberText != null) 
+        {
+            waveNumberText.text = $"WAVE: {currentWave}";
+        }
     }
 
     #region Lobby & Connecting
@@ -200,6 +223,20 @@ public class GameUIManager : NetworkBehaviour
 
         NetworkEnemyWaveSpawner spawner = FindFirstObjectByType<NetworkEnemyWaveSpawner>();
         if (spawner != null) spawner.ResetSpawner();
+
+        // 👈 NEW: Reset all Guardians (Totems)
+        GuardianHealth[] guardians = FindObjectsByType<GuardianHealth>(FindObjectsSortMode.None);
+        foreach (var guardian in guardians)
+        {
+            guardian.ResetGuardian();
+        }
+
+        // 👈 NEW: Reset all Network Defenses (Turrets)
+        NetworkDefense[] defenses = FindObjectsByType<NetworkDefense>(FindObjectsSortMode.None);
+        foreach (var defense in defenses)
+        {
+            defense.ResetDefense();
+        }
 
         ProjectileBehavior[] allProjectiles = FindObjectsByType<ProjectileBehavior>(FindObjectsSortMode.None);
         foreach (var proj in allProjectiles)
@@ -374,9 +411,14 @@ public class GameUIManager : NetworkBehaviour
 
     public void UpdateHUDWaveDisplay(int currentWave)
     {
-        if (IsServer) UpdateHUDWaveDisplayClientRpc(currentWave);
-        else if (waveNumberText != null) waveNumberText.text = $"WAVE: {currentWave}";
+        if (IsServer) 
+        {
+            // Changing this value will automatically trigger UpdateWaveText for everyone!
+            currentWaveNumber.Value = currentWave; 
+        }
     }
+    
+    // (You can delete the old UpdateHUDWaveDisplayClientRpc method entirely)
 
     [ClientRpc]
     private void UpdateHUDWaveDisplayClientRpc(int currentWave)
@@ -521,9 +563,9 @@ public class GameUIManager : NetworkBehaviour
         {
             case UpgradeType.AdditionalWeapon: return "ADDITIONAL WEAPONS (+1 BARREL)";
             case UpgradeType.Damage: return "DAMAGE UP (x1.2)";
-            case UpgradeType.FireRate: return "FIRE RATE UP (x1.02)";
+            case UpgradeType.FireRate: return "FIRE RATE UP (x1.1)";
             case UpgradeType.HealthMax: return "MAX HEALTH UP (x1.1)";
-            case UpgradeType.HealthRepair: return "REPAIR (HEAL 25%)";
+            case UpgradeType.HealthRepair: return "REPAIR (HEAL 75%)";
             case UpgradeType.ReviveTeammate: return "REVIVE A TEAMMATE";
             default: return "UNKNOWN UPGRADE";
         }

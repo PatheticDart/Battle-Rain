@@ -41,13 +41,13 @@ public class PlayerUpgrades : NetworkBehaviour
                 damageMultiplier.Value *= 1.2f;
                 break;
             case UpgradeType.FireRate:
-                fireRateMultiplier.Value *= 1.02f;
+                fireRateMultiplier.Value *= 1.1f;
                 break;
             case UpgradeType.HealthMax:
                 if (TryGetComponent(out PlayerHealth ph1)) ph1.ApplyHealthUpgrade(1.1f);
                 break;
             case UpgradeType.HealthRepair:
-                if (TryGetComponent(out PlayerHealth ph2)) ph2.RepairHealth(0.25f);
+                if (TryGetComponent(out PlayerHealth ph2)) ph2.RepairHealth(0.75f);
                 break;
             case UpgradeType.ReviveTeammate:
                 // 👈 NEW: Find all dead players, pick a random one, and revive them!

@@ -5,6 +5,7 @@ public class HealthBarView : MonoBehaviour
 {
     private HasHealth health;
     private Image fillImage;
+    private Canvas localCanvas; // 👈 NEW: Cache the canvas to toggle it efficiently
 
     public void Initialize(HasHealth source)
     {
@@ -14,9 +15,9 @@ public class HealthBarView : MonoBehaviour
 
     private void CreateVisuals()
     {
-        Canvas canvas = gameObject.AddComponent<Canvas>();
-        canvas.renderMode = RenderMode.WorldSpace;
-        canvas.worldCamera = Camera.main;
+        localCanvas = gameObject.AddComponent<Canvas>(); // 👈 NEW: Store the reference
+        localCanvas.renderMode = RenderMode.WorldSpace;
+        localCanvas.worldCamera = Camera.main;
 
         CanvasScaler scaler = gameObject.AddComponent<CanvasScaler>();
         scaler.dynamicPixelsPerUnit = 10f;
@@ -41,20 +42,25 @@ public class HealthBarView : MonoBehaviour
     {
         if (health == null || fillImage == null) return;
 
-        if (Camera.main != null)
-            GetComponent<Canvas>().worldCamera = Camera.main;
+        if (Camera.main != null && localCanvas.worldCamera == null)
+            localCanvas.worldCamera = Camera.main;
 
         fillImage.fillAmount = health.MaxHealth > 0
             ? Mathf.Clamp01((float)health.currentHealth.Value / health.MaxHealth)
             : 0f;
-        gameObject.SetActive(health.currentHealth.Value > 0 || health is GuardianHealth);
+            
+        // 👈 FIX: Disable the canvas component instead of the GameObject!
+        if (localCanvas != null)
+        {
+            localCanvas.enabled = (health.currentHealth.Value > 0 || health is GuardianHealth);
+        }
     }
 
     private float GetHeightOffset()
     {
         if (health is GuardianHealth) return 1.8f;
-        if (health is PlayerHealth) return 1.5f;
-        return 1.2f;
+        if (health is PlayerHealth) return 1f;
+        return 1f;
     }
 
     private Color GetHealthColor()

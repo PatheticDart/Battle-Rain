@@ -12,6 +12,9 @@ public class NetworkMechController : NetworkBehaviour
     [SerializeField] private Transform lowerBody;
     [SerializeField] private Transform upperBody;
 
+    [Header("UI")]
+    [SerializeField] private TMPro.TextMeshProUGUI interactPromptText;
+
     private Rigidbody2D rb;
     private Camera mainCamera;
     private Animator lowerAnimator;
@@ -79,6 +82,7 @@ public class NetworkMechController : NetworkBehaviour
         }
 
         // --- LOCAL PLAYER LOGIC (Runs with ZERO latency) ---
+        CheckProximityForUI();
         HandleInput();
         HandleDefenseInteraction();
         HandleUpperBodyRotation();
@@ -89,35 +93,100 @@ public class NetworkMechController : NetworkBehaviour
         netIsWalking.Value = moveInput.sqrMagnitude > 0.01f;
     }
 
+    private void CheckProximityForUI()
+    {
+        if (interactPromptText == null) return;
+        
+        bool promptActive = false;
+        float interactionRadius = 2.5f;
+
+        // --- 1. Check Defenses ---
+        NetworkDefense[] defenses = FindObjectsByType<NetworkDefense>(FindObjectsSortMode.None);
+        foreach (NetworkDefense defense in defenses)
+        {
+            float distance = Vector2.Distance(transform.position, defense.transform.position);
+            
+            if (distance <= interactionRadius && defense.currentLevel.Value < defense.maxLevel)
+            {
+                int cost = defense.GetNextUpgradeCost();
+                
+                if (defense.currentLevel.Value == 0)
+                    interactPromptText.text = $"Press [E] Purchase Turret ({cost} Score)";
+                else
+                    interactPromptText.text = $"Press [E] Upgrade Turret Lv.{defense.currentLevel.Value + 1} ({cost} Score)";
+                
+                promptActive = true;
+                break;
+            }
+        }
+
+        // --- 2. Check Guardians (Only if a defense isn't already taking priority) ---
+        if (!promptActive)
+        {
+            GuardianHealth[] guardians = FindObjectsByType<GuardianHealth>(FindObjectsSortMode.None);
+            foreach (GuardianHealth guardian in guardians)
+            {
+                float distance = Vector2.Distance(transform.position, guardian.transform.position);
+                
+                if (distance <= guardian.InteractionRadius)
+                {
+                    if (guardian.IsDamaged)
+                    {
+                        // 👈 FIX: Changed word "Currency" to "Score"
+                        interactPromptText.text = $"Press [E] Repair Totem ({guardian.GetCurrentRepairCost()} Score)";
+                    }
+                    else
+                    {
+                        // 👈 FIX: Changed word "Currency" to "Score"   
+                        interactPromptText.text = $"Press [E] Upgrade Totem HP ({guardian.GetCurrentUpgradeCost()} Score)";
+                    }
+                    
+                    promptActive = true;
+                    break;
+                }
+            }
+        }
+
+        interactPromptText.gameObject.SetActive(promptActive);
+    }
+
     private void HandleDefenseInteraction()
     {
         if (!Input.GetKeyDown(KeyCode.E)) return;
 
+        // --- 1. CHECK FOR TURRET DEFENSES ---
         NetworkDefense[] defenses = FindObjectsByType<NetworkDefense>(FindObjectsSortMode.None);
-        NetworkDefense closest = null;
-        float closestDistance = 2.5f * 2.5f;
+        NetworkDefense closestDefense = null;
+        float closestDefenseDistance = 2.5f * 2.5f;
+
         foreach (NetworkDefense defense in defenses)
         {
             float distance = ((Vector2)defense.transform.position - rb.position).sqrMagnitude;
-            if (distance <= closestDistance)
+            
+            // Allow interaction if within range and not at max level
+            if (distance <= closestDefenseDistance && defense.currentLevel.Value < defense.maxLevel)
             {
-                closestDistance = distance;
-                closest = defense;
+                closestDefenseDistance = distance;
+                closestDefense = defense;
             }
         }
 
-        if (closest != null)
+        if (closestDefense != null)
         {
-            closest.RequestUpgradeServerRpc();
-            return;
+            // 👈 Calls the unified RPC which handles both purchasing and upgrading
+            closestDefense.RequestInteractServerRpc();
+            return; 
         }
 
+        // --- 2. CHECK FOR GUARDIANS ---
         GuardianHealth[] guardians = FindObjectsByType<GuardianHealth>(FindObjectsSortMode.None);
         GuardianHealth closestGuardian = null;
         float closestGuardianDistance = float.MaxValue;
+
         foreach (GuardianHealth guardian in guardians)
         {
             float distance = ((Vector2)guardian.transform.position - rb.position).sqrMagnitude;
+            
             if (distance <= guardian.InteractionRadius * guardian.InteractionRadius && distance < closestGuardianDistance)
             {
                 closestGuardianDistance = distance;
@@ -125,7 +194,10 @@ public class NetworkMechController : NetworkBehaviour
             }
         }
 
-        if (closestGuardian != null) closestGuardian.RequestRepairOrUpgradeServerRpc();
+        if (closestGuardian != null)
+        {
+            closestGuardian.RequestRepairOrUpgradeServerRpc();
+        }
     }
 
     private void FixedUpdate()
